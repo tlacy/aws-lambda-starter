@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{PROJECT_NAME}}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; min-height: 100vh; }
+    header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 1.1rem; font-weight: 800; }
+    .btn-logout { background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 14px; font-size: .85rem; cursor: pointer; color: #64748b; }
+    .btn-logout:hover { background: #f1f5f9; }
+    main { max-width: 800px; margin: 40px auto; padding: 0 24px; }
+    .welcome { font-size: 1.3rem; font-weight: 700; margin-bottom: 8px; }
+    p.hint { color: #64748b; font-size: .9rem; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>{{PROJECT_NAME}}</h1>
+  <button class="btn-logout" onclick="logout()">Sign Out</button>
+</header>
+<main>
+  <p class="welcome">Welcome back, <span id="user-name">there</span>!</p>
+  <p class="hint">Build your app here. Auth is wired up — see backend/src/routes/ to add your own endpoints.</p>
+</main>
+<script>
+  const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:3000'
+    : 'https://{{PROD_API_GATEWAY_ID}}.execute-api.{{AWS_REGION}}.amazonaws.com';
+
+  const token = localStorage.getItem('token');
+  if (!token) { window.location.href = 'landing.html'; }
+
+  // Load user profile
+  (async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) { logout(); return; }
+      const data = await res.json();
+      document.getElementById('user-name').textContent = data.user?.name || data.user?.email || 'there';
+    } catch { logout(); }
+  })();
+
+  function logout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.href = 'landing.html';
+  }
+</script>
+</body>
+</html>

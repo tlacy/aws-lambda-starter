@@ -1,0 +1,35 @@
+{
+  "users": {
+    "id": "uuid",
+    "email": "varchar",
+    "password_hash": "varchar",
+    "name": "varchar",
+    "status": "varchar",
+    "is_admin": "boolean",
+    "email_verified": "smallint",
+    "verification_token": "varchar",
+    "verification_token_expires": "timestamp",
+    "created_at": "timestamp",
+    "updated_at": "timestamp",
+    "deleted_at": "timestamp"
+  },
+  "password_reset_tokens": {
+    "id": "uuid",
+    "user_id": "uuid",
+    "token": "varchar",
+    "expires_at": "timestamp",
+    "used_at": "timestamp",
+    "created_at": "timestamp"
+  },
+  "failed_login_attempts": {
+    "id": "uuid",
+    "email": "varchar",
+    "ip_address": "varchar",
+    "attempt_time": "timestamp"
+  },
+  "migrations": {
+    "id": "uuid",
+    "filename": "varchar",
+    "applied_at": "timestamp"
+  }
+}

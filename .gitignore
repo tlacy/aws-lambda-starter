@@ -1,0 +1,7 @@
+node_modules/
+.env
+lambda-temp/
+lambda-deployment.zip
+*.bak
+.DS_Store
+coverage/
