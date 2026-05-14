@@ -85,12 +85,28 @@ aws iam put-role-policy \
 
 ## Step 3: Create Aurora DSQL clusters
 
-```bash
-# Create staging cluster
-aws dsql create-cluster --region {{AWS_REGION}} --tags Key=env,Value=staging
+> **Copilot agents can run these commands directly** — no manual console work needed.
+> Ask Copilot: *"Provision the DSQL staging and prod clusters for this project."*
 
-# Create production cluster
-aws dsql create-cluster --region {{AWS_REGION}} --tags Key=env,Value=production
+```bash
+# Create staging cluster (tag Name={{PROJECT_SLUG}}-staging for identification)
+STAGING_ID=$(aws dsql create-cluster --region {{AWS_REGION}} --query "identifier" --output text)
+aws dsql tag-resource \
+  --resource-arn "arn:aws:dsql:{{AWS_REGION}}:{{AWS_ACCOUNT_ID}}:cluster/${STAGING_ID}" \
+  --tags "Name={{PROJECT_SLUG}}-staging"
+echo "Staging: ${STAGING_ID}.dsql.{{AWS_REGION}}.on.aws"
+
+# Create production cluster (tag Name={{PROJECT_SLUG}}-prod)
+PROD_ID=$(aws dsql create-cluster --region {{AWS_REGION}} --query "identifier" --output text)
+aws dsql tag-resource \
+  --resource-arn "arn:aws:dsql:{{AWS_REGION}}:{{AWS_ACCOUNT_ID}}:cluster/${PROD_ID}" \
+  --tags "Name={{PROJECT_SLUG}}-prod"
+echo "Prod: ${PROD_ID}.dsql.{{AWS_REGION}}.on.aws"
+```
+
+Clusters are typically `ACTIVE` within 60 seconds. Poll with:
+```bash
+aws dsql get-cluster --identifier $STAGING_ID --region {{AWS_REGION}} --query "status" --output text
 ```
 
 Note the hostnames. Update `{{STAGING_DSQL_ENDPOINT}}` and `{{PROD_DSQL_ENDPOINT}}` in your config.
@@ -212,21 +228,79 @@ Configure Lambda integrations and `$default` routes via console or CLI. Update A
 
 ## Step 9: Create ACM certificate + CloudFront
 
-```bash
-# Request cert (must be in us-east-1 for CloudFront)
-aws acm request-certificate \
-  --domain-name {{DOMAIN}} \
-  --validation-method DNS \
-  --region us-east-1
+### 9a. Request the cert (AI can do this)
 
-# Wait for ISSUED status (add CNAME validation records to your DNS first)
+```bash
+CERT_ARN=$(aws acm request-certificate \
+  --domain-name {{DOMAIN}} \
+  --subject-alternative-names "www.{{DOMAIN}}" \
+  --validation-method DNS \
+  --region us-east-1 \
+  --query CertificateArn --output text) && echo "Cert ARN: $CERT_ARN"
+
+# Get the CNAME validation record AWS needs
 aws acm describe-certificate \
-  --certificate-arn <cert-arn> \
-  --query Certificate.Status \
-  --region us-east-1
+  --certificate-arn $CERT_ARN \
+  --region us-east-1 \
+  --query "Certificate.DomainValidationOptions[0].ResourceRecord" \
+  --output json
 ```
 
-After cert is ISSUED, see `create-cloudfront.sh` for CloudFront setup.
+This returns something like:
+```json
+{
+  "Name": "_abc123.{{DOMAIN}}.",
+  "Type": "CNAME",
+  "Value": "_xyz789.acm-validations.aws."
+}
+```
+
+### 9b. Add the validation CNAME in Squarespace ⚠️ Manual step
+
+> **Portal**: [domains.squarespace.com](https://domains.squarespace.com) → your domain → DNS  
+> **Not** squarespace.com/config (that's the website builder, not DNS) — pitfall #112
+
+1. Click **DNS** for `{{DOMAIN}}`
+2. Click **Add record** → type **CNAME**
+3. **Host**: paste the `Name` value from above, **strip the trailing dot and the domain suffix**
+   - e.g. if `Name` is `_abc123.www.{{DOMAIN}}.` → enter just `_abc123.www`
+   - Squarespace appends the domain automatically
+4. **Points to**: paste the `Value` from above, strip the trailing dot
+5. Save
+
+### 9c. Wait for cert to be ISSUED (AI can poll this)
+
+```bash
+# Poll until status = ISSUED (usually 2-5 min after DNS propagates)
+aws acm describe-certificate \
+  --certificate-arn $CERT_ARN \
+  --region us-east-1 \
+  --query Certificate.Status \
+  --output text
+```
+
+⚠️ Do NOT create CloudFront until this returns `ISSUED` — pitfall #113.
+
+### 9d. Create CloudFront distribution (AI can do this)
+
+After cert is ISSUED, run `create-cloudfront.sh` (updates to the script are in the repo).
+
+### 9e. Point www subdomain to CloudFront in Squarespace ⚠️ Manual step
+
+After CloudFront is created (you'll get a domain like `d1234abcd.cloudfront.net`):
+
+1. Go to [domains.squarespace.com](https://domains.squarespace.com) → **DNS**
+2. **Add record** → type **CNAME**
+3. **Host**: `www`
+4. **Points to**: `d1234abcd.cloudfront.net` (your CloudFront domain, no trailing dot)
+5. Save
+
+For the apex domain (`{{DOMAIN}}` without www): Squarespace does not support ALIAS records, so add an **URL redirect** record:
+- **Host**: `@` (or blank)
+- **Redirects to**: `https://www.{{DOMAIN}}`
+- Type: **Permanent (301)**
+
+> DNS changes propagate in 1–30 min. Test with `curl -I https://www.{{DOMAIN}}`.
 
 ---
 
@@ -251,14 +325,55 @@ bash deploy.sh
 
 ---
 
-## Step 12: Verify SES email
+## Step 12: Verify SES email domain
 
-1. Go to AWS SES console → Verified identities
-2. Add your domain ({{DOMAIN}})
-3. Add DKIM CNAME records to your DNS provider
-4. Wait for verification (usually 5–10 min)
+### 12a. Add the domain in SES (AI can do this)
 
-If your account is in SES sandbox, request production access before going live.
+```bash
+aws sesv2 create-email-identity \
+  --email-identity {{DOMAIN}} \
+  --dkim-signing-attributes NextSigningKeyLength=RSA_2048_BIT \
+  --region us-east-1 \
+  --query "DkimAttributes.Tokens" \
+  --output json
+```
+
+This returns 3 DKIM tokens like `["abc123token", "def456token", "ghi789token"]`.
+
+The CNAME records to add are:
+- `abc123token._domainkey.{{DOMAIN}}` → `abc123token.dkim.amazonses.com`
+- (same pattern for all 3 tokens)
+
+### 12b. Add DKIM CNAMEs in Squarespace ⚠️ Manual step
+
+> **Portal**: [domains.squarespace.com](https://domains.squarespace.com) → **DNS** (not the website builder)
+
+For each of the 3 tokens:
+1. **Add record** → type **CNAME**
+2. **Host**: `<token>._domainkey`  (Squarespace appends `.{{DOMAIN}}` automatically — don't include it)
+3. **Points to**: `<token>.dkim.amazonses.com`
+4. Save
+
+### 12c. Verify DKIM status (AI can poll this)
+
+```bash
+aws sesv2 get-email-identity \
+  --email-identity {{DOMAIN}} \
+  --region us-east-1 \
+  --query "DkimAttributes.Status" \
+  --output text
+```
+
+Wait for `SUCCESS` (usually 5–10 min after DNS propagates).
+
+### 12d. Request SES production access (if in sandbox)
+
+New AWS accounts start in sandbox mode (can only send to verified addresses). Request production access:
+
+1. Go to **AWS SES Console** → **Account dashboard**
+2. Click **Request production access**
+3. Fill in use case, estimated volume, and bounce handling details
+4. Approval typically takes 24 hours
 
 ---
 

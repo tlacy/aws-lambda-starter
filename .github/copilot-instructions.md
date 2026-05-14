@@ -52,6 +52,8 @@
 
 **Secrets Manager keys** (both envs — NO Mailgun): `DSQL_ENDPOINT`, `JWT_SECRET`, `EMAIL_FROM`, `APP_URL`, `API_URL`
 
+> **DSQL clusters can be provisioned by Copilot** — no AWS Console needed. The agent can run `aws dsql create-cluster` and tag clusters as `{{PROJECT_SLUG}}-staging` and `{{PROJECT_SLUG}}-prod`. See `SETUP.md` Step 3 for the exact commands.
+
 ## EMAIL: AWS SES (NOT MAILGUN)
 
 Email uses **AWS SES with IAM role auth** — no API key, no SMTP credentials needed.
