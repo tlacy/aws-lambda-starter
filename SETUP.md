@@ -62,7 +62,7 @@ aws iam put-role-policy \
     "Version": "2012-10-17",
     "Statement": [{
       "Effect": "Allow",
-      "Action": "ses:SendEmail",
+      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
       "Resource": "*"
     }]
   }'
@@ -327,13 +327,14 @@ bash deploy.sh
 
 ## Step 12: Verify SES email domain
 
+> ⚠️ **Do this BEFORE your first deploy.** The auth routes swallow email errors so registration appears to succeed — but users never get verification emails. There's no visible failure. Discovering this in production costs a debug session.
+
 ### 12a. Add the domain in SES (AI can do this)
 
 ```bash
+# Note: no --dkim-signing-attributes flag needed — Easy DKIM RSA_2048 is the default
 aws sesv2 create-email-identity \
   --email-identity {{DOMAIN}} \
-  --dkim-signing-attributes NextSigningKeyLength=RSA_2048_BIT \
-  --region us-east-1 \
   --query "DkimAttributes.Tokens" \
   --output json
 ```
@@ -344,22 +345,27 @@ The CNAME records to add are:
 - `abc123token._domainkey.{{DOMAIN}}` → `abc123token.dkim.amazonses.com`
 - (same pattern for all 3 tokens)
 
-### 12b. Add DKIM CNAMEs in Squarespace ⚠️ Manual step
+### 12b. Add DKIM CNAMEs + fix SPF in Squarespace ⚠️ Manual step
 
 > **Portal**: [domains.squarespace.com](https://domains.squarespace.com) → **DNS** (not the website builder)
 
-For each of the 3 tokens:
+**3 DKIM CNAMEs** — for each of the 3 tokens:
 1. **Add record** → type **CNAME**
 2. **Host**: `<token>._domainkey`  (Squarespace appends `.{{DOMAIN}}` automatically — don't include it)
 3. **Points to**: `<token>.dkim.amazonses.com`
 4. Save
+
+**SPF TXT record** — Squarespace creates a default `v=spf1 -all` TXT record on `@` which hard-rejects all email. You must replace it:
+1. Find the existing TXT record on `@` with value `v=spf1 -all`
+2. **Edit** it (or delete and re-add) with value: `v=spf1 include:amazonses.com ~all`
+
+> If you skip the SPF fix, DKIM may pass but SPF will hard-fail (`-all`). Combined with a strict DMARC policy this causes silent delivery failures to Gmail and other providers.
 
 ### 12c. Verify DKIM status (AI can poll this)
 
 ```bash
 aws sesv2 get-email-identity \
   --email-identity {{DOMAIN}} \
-  --region us-east-1 \
   --query "DkimAttributes.Status" \
   --output text
 ```
@@ -391,7 +397,7 @@ New AWS accounts start in sandbox mode (can only send to verified addresses). Re
 - [ ] ACM cert issued
 - [ ] CloudFront distribution created
 - [ ] DNS records updated
-- [ ] SES domain verified
+- [ ] SES domain verified (DKIM CNAMEs + SPF record updated in DNS)
 - [ ] `.env` file created for local dev
 - [ ] All `{{PLACEHOLDER}}` values replaced
 - [ ] First deploy successful + smoke tests passing
