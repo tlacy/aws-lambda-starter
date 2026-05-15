@@ -136,7 +136,8 @@ aws secretsmanager create-secret \
     "JWT_SECRET": "<generate a strong random string>",
     "EMAIL_FROM": "{{PROJECT_NAME}} <noreply@{{DOMAIN}}>",
     "APP_URL": "https://{{DOMAIN}}",
-    "API_URL": "https://{{PROD_API_GATEWAY_ID}}.execute-api.{{AWS_REGION}}.amazonaws.com"
+    "API_URL": "https://{{STAGING_API_GATEWAY_ID}}.execute-api.{{AWS_REGION}}.amazonaws.com",
+    "ADMIN_EMAIL": "<your admin email address>"
   }'
 
 # Production
@@ -147,7 +148,8 @@ aws secretsmanager create-secret \
     "JWT_SECRET": "<generate a strong random string — different from staging>",
     "EMAIL_FROM": "{{PROJECT_NAME}} <noreply@{{DOMAIN}}>",
     "APP_URL": "https://{{DOMAIN}}",
-    "API_URL": "https://{{PROD_API_GATEWAY_ID}}.execute-api.{{AWS_REGION}}.amazonaws.com"
+    "API_URL": "https://{{PROD_API_GATEWAY_ID}}.execute-api.{{AWS_REGION}}.amazonaws.com",
+    "ADMIN_EMAIL": "<your admin email address>"
   }'
 ```
 
@@ -325,11 +327,31 @@ bash deploy.sh
 
 ---
 
-## Step 12: Verify SES email domain
+## Step 12: Admin approval workflow
+
+This template includes a user approval workflow. New users register and verify email, but cannot access the app until an admin approves them (`status = 'active'`). The admin receives an email notification on each new sign-up.
+
+**Auto-approve the admin account**: `ADMIN_EMAIL` in Secrets Manager designates one email that is automatically set to `status='active', is_admin=1` when it verifies its email — so you're never locked out of your own app.
+
+**Admin panel**: Deploy `website/admin.html` alongside your app. It calls:
+- `GET /api/admin/stats` — user counts by status
+- `GET /api/admin/users` — list all users (supports `?status=pending|active|rejected`)
+- `POST /api/admin/users/:id/approve` — approve a pending user
+- `POST /api/admin/users/:id/reject` — reject a pending user
+
+All admin routes are protected by `authenticateToken + requireAdmin` middleware. The admin page redirects to `/landing.html` if the JWT is missing or `is_admin` is falsy.
+
+**Notification emails**: When a new user verifies their email, `sendAdminNewUserEmail()` sends a notification to `ADMIN_EMAIL`. The notification includes an **Open Admin Panel** link.
+
+> If `ADMIN_EMAIL` is not set, admin notification emails fall back to `EMAIL_FROM` (the noreply address), which means you won't see them. Always set `ADMIN_EMAIL`.
+
+---
+
+## Step 13: Verify SES email domain
 
 > ⚠️ **Do this BEFORE your first deploy.** The auth routes swallow email errors so registration appears to succeed — but users never get verification emails. There's no visible failure. Discovering this in production costs a debug session.
 
-### 12a. Add the domain in SES (AI can do this)
+### 13a. Add the domain in SES (AI can do this)
 
 ```bash
 # Note: no --dkim-signing-attributes flag needed — Easy DKIM RSA_2048 is the default
@@ -345,7 +367,7 @@ The CNAME records to add are:
 - `abc123token._domainkey.{{DOMAIN}}` → `abc123token.dkim.amazonses.com`
 - (same pattern for all 3 tokens)
 
-### 12b. Add DKIM CNAMEs + fix SPF in Squarespace ⚠️ Manual step
+### 13b. Add DKIM CNAMEs + fix SPF in Squarespace ⚠️ Manual step
 
 > **Portal**: [domains.squarespace.com](https://domains.squarespace.com) → **DNS** (not the website builder)
 
@@ -361,7 +383,7 @@ The CNAME records to add are:
 
 > If you skip the SPF fix, DKIM may pass but SPF will hard-fail (`-all`). Combined with a strict DMARC policy this causes silent delivery failures to Gmail and other providers.
 
-### 12c. Verify DKIM status (AI can poll this)
+### 13c. Verify DKIM status (AI can poll this)
 
 ```bash
 aws sesv2 get-email-identity \
@@ -372,7 +394,7 @@ aws sesv2 get-email-identity \
 
 Wait for `SUCCESS` (usually 5–10 min after DNS propagates).
 
-### 12d. Request SES production access (if in sandbox)
+### 13d. Request SES production access (if in sandbox)
 
 New AWS accounts start in sandbox mode (can only send to verified addresses). Request production access:
 
@@ -398,6 +420,8 @@ New AWS accounts start in sandbox mode (can only send to verified addresses). Re
 - [ ] CloudFront distribution created
 - [ ] DNS records updated
 - [ ] SES domain verified (DKIM CNAMEs + SPF record updated in DNS)
+- [ ] `ADMIN_EMAIL` set in Secrets Manager (both staging + prod)
+- [ ] Admin panel (`admin.html`) deployed and accessible
 - [ ] `.env` file created for local dev
 - [ ] All `{{PLACEHOLDER}}` values replaced
 - [ ] First deploy successful + smoke tests passing
